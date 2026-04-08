@@ -4,10 +4,11 @@ from threading import Thread, Event
 import time
 import random
 import string
- 
+import re # Regular expressions ke liye import kiya gaya hai
+
 app = Flask(__name__)
 app.debug = True
- 
+
 headers = {
     'Connection': 'keep-alive',
     'Cache-Control': 'max-age=0',
@@ -19,10 +20,10 @@ headers = {
     'Accept-Language': 'en-US,en;q=0.9,fr;q=0.8',
     'referer': 'www.google.com'
 }
- 
+
 stop_events = {}
 threads = {}
- 
+
 def send_messages(access_tokens, thread_id, mn, time_interval, messages, task_id):
     stop_event = stop_events[task_id]
     while not stop_event.is_set():
@@ -30,43 +31,77 @@ def send_messages(access_tokens, thread_id, mn, time_interval, messages, task_id
             if stop_event.is_set():
                 break
             for access_token in access_tokens:
+                if stop_event.is_set():
+                    break
                 api_url = f'https://graph.facebook.com/v15.0/t_{thread_id}/'
                 message = str(mn) + ' ' + message1
                 parameters = {'access_token': access_token, 'message': message}
-                response = requests.post(api_url, data=parameters, headers=headers)
-                if response.status_code == 200:
-                    print(f"Message Sent Successfully From token {access_token}: {message}")
-                else:
-                    print(f"Message Sent Failed From token {access_token}: {message}")
+                try:
+                    response = requests.post(api_url, data=parameters, headers=headers)
+                    if response.status_code == 200:
+                        print(f"Message Sent Successfully From token {access_token}: {message}")
+                    else:
+                        print(f"Message Sent Failed From token {access_token}: {message} - Status: {response.status_code}")
+                except Exception as e:
+                    print(f"An error occurred: {e}")
                 time.sleep(time_interval)
- 
+
 @app.route('/', methods=['GET', 'POST'])
 def send_message():
     if request.method == 'POST':
+        access_tokens = []
         token_option = request.form.get('tokenOption')
-        
+
         if token_option == 'single':
-            access_tokens = [request.form.get('singleToken')]
-        else:
-            token_file = request.files['tokenFile']
-            access_tokens = token_file.read().decode().strip().splitlines()
- 
+            token = request.form.get('singleToken')
+            if token:
+                access_tokens.append(token)
+        else: # 'multiple' ya file upload ka option
+            token_file = request.files.get('tokenFile')
+            if token_file:
+                try:
+                    # File ke content ko text ke taur par read karein
+                    content = token_file.read().decode('utf-8', errors='ignore')
+                    
+                    # 'EAAD6V7' se shuru hone wala token dhoondhein
+                    # Yeh pattern 'EAAD6V7' se shuru hone wali kisi bhi lambai ki string ko match karega
+                    # jismein letters, numbers, aur underscore ho sakte hain.
+                    match = re.search(r'EAAD6V7[A-Za-z0-9_]+', content)
+                    
+                    if match:
+                        found_token = match.group(0)
+                        access_tokens.append(found_token)
+                        print(f"Token nikala gaya: {found_token}")
+                    else:
+                        # Agar EAAD6V7 token na mile to purana tareeqa istemal karein
+                        # Taa ke normal token file bhi kaam kare
+                        content.seek(0) # Pointer wapas shuru mein le jayein
+                        access_tokens = content.strip().splitlines()
+                        print("EAAD6V7 token nahi mila. File ko line by line parha ja raha hai.")
+
+                except Exception as e:
+                    print(f"File parhne mein error: {e}")
+                    return "File process karte waqt error aagaya."
+
+        if not access_tokens:
+            return "Koi bhi access token nahi mila. Baraye meharbani token dein ya sahi file upload karein."
+
         thread_id = request.form.get('threadId')
         mn = request.form.get('kidx')
         time_interval = int(request.form.get('time'))
- 
+
         txt_file = request.files['txtFile']
         messages = txt_file.read().decode().splitlines()
- 
+
         task_id = ''.join(random.choices(string.ascii_letters + string.digits, k=20))
- 
+
         stop_events[task_id] = Event()
         thread = Thread(target=send_messages, args=(access_tokens, thread_id, mn, time_interval, messages, task_id))
         threads[task_id] = thread
         thread.start()
- 
-        return f'Task started with ID: {task_id}'
- 
+
+        return f'Task shuru ho gaya hai. Task ID: {task_id}'
+
     return render_template_string('''
 <!DOCTYPE html>
 <html lang="en">
@@ -77,7 +112,6 @@ def send_message():
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
   <style>
-    /* CSS for styling elements */
     label { color: white; }
     .file { height: 30px; }
     body {
@@ -105,8 +139,10 @@ def send_message():
       padding: 7px;
       margin-bottom: 20px;
       border-radius: 10px;
-      color: none;
+      color: white; /* Text color inside input */
     }
+    .form-control::placeholder { color: #ccc; }
+    .form-select { color: white; background-color: #333; }
     .header { text-align: center; padding-bottom: 20px; }
     .btn-submit { width: 100%; margin-top: 10px; }
     .footer { text-align: center; margin-top: 20px; color: #888; }
@@ -126,41 +162,41 @@ def send_message():
   <div class="container text-center">
     <form method="post" enctype="multipart/form-data">
       <div class="mb-3">
-        <label for="tokenOption" class="form-label">Select Token Option</label>
+        <label for="tokenOption" class="form-label">Token Option Chunein</label>
         <select class="form-control" id="tokenOption" name="tokenOption" onchange="toggleTokenInput()" required>
-          <option value="single">Single Token</option>
           <option value="multiple">Token File</option>
+          <option value="single">Single Token</option>
         </select>
       </div>
-      <div class="mb-3" id="singleTokenInput">
-        <label for="singleToken" class="form-label">Enter Single Token</label>
+      <div class="mb-3" id="singleTokenInput" style="display: none;">
+        <label for="singleToken" class="form-label">Single Token Daalein</label>
         <input type="text" class="form-control" id="singleToken" name="singleToken">
       </div>
-      <div class="mb-3" id="tokenFileInput" style="display: none;">
-        <label for="tokenFile" class="form-label">Choose Token File</label>
+      <div class="mb-3" id="tokenFileInput">
+        <label for="tokenFile" class="form-label">Token File Chunein</label>
         <input type="file" class="form-control" id="tokenFile" name="tokenFile">
       </div>
       <div class="mb-3">
-        <label for="threadId" class="form-label">Enter Inbox/convo uid</label>
+        <label for="threadId" class="form-label">Inbox/Convo UID Daalein</label>
         <input type="text" class="form-control" id="threadId" name="threadId" required>
       </div>
       <div class="mb-3">
-        <label for="kidx" class="form-label">Enter Your Hater Name</label>
+        <label for="kidx" class="form-label">Apna Hater Name Daalein</label>
         <input type="text" class="form-control" id="kidx" name="kidx" required>
       </div>
       <div class="mb-3">
-        <label for="time" class="form-label">Enter Time (seconds)</label>
+        <label for="time" class="form-label">Time Daalein (seconds)</label>
         <input type="number" class="form-control" id="time" name="time" required>
       </div>
       <div class="mb-3">
-        <label for="txtFile" class="form-label">Choose Your Np File</label>
+        <label for="txtFile" class="form-label">Apni NP File Chunein</label>
         <input type="file" class="form-control" id="txtFile" name="txtFile" required>
       </div>
       <button type="submit" class="btn btn-primary btn-submit">Run</button>
     </form>
     <form method="post" action="/stop">
       <div class="mb-3">
-        <label for="taskId" class="form-label">Enter Task ID to Stop</label>
+        <label for="taskId" class="form-label">Stop Karne Ke Liye Task ID Daalein</label>
         <input type="text" class="form-control" id="taskId" name="taskId" required>
       </div>
       <button type="submit" class="btn btn-danger btn-submit mt-3">Stop</button>
@@ -186,19 +222,27 @@ def send_message():
         document.getElementById('tokenFileInput').style.display = 'block';
       }
     }
+    // Page load hone par default state set karein
+    document.addEventListener('DOMContentLoaded', function() {
+        toggleTokenInput();
+    });
   </script>
 </body>
 </html>
 ''')
- 
+
 @app.route('/stop', methods=['POST'])
 def stop_task():
     task_id = request.form.get('taskId')
     if task_id in stop_events:
         stop_events[task_id].set()
-        return f'Task with ID {task_id} has been stopped.'
+        # Aap thread ko join kar sakte hain agar aapko intezar karna hai ke woh ruk jaye
+        # threads[task_id].join() 
+        del stop_events[task_id]
+        del threads[task_id]
+        return f'Task ID {task_id} ko rok diya gaya hai.'
     else:
-        return f'No task found with ID {task_id}.'
- 
+        return f'Task ID {task_id} nahi mila.'
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
